@@ -1,37 +1,90 @@
-# Project Title
+# WaiChat
 
-[![GitHub license](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE) [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](./CONTRIBUTING.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
-One-line description of what this project does and who it's for.
+A Private, Serverless AI Chat App built on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/). Free to run, yours to own, one click to deploy. No backend server, no third-party services, no monthly bills. Deploy in one click and start chatting.
+
+> WaiChat is short for Workers AI Chat
 
 ## Features
 
-- Feature one
-- Feature two
-- Feature three
+- **One-click deploy** - runs entirely on Cloudflare's free tier
+- **Multiple AI models** - switch between available Workers AI models on the fly
+- **Streaming responses** - real-time output, no waiting
+- **Conversation history** - sidebar with past chats, auto-generated titles
+- **Flexible storage** - cloud (Cloudflare D1) or local (browser localStorage)
+- **Auth-ready** - works out of the box with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) for private deployments
 
-## Getting Started
+## Deploy
 
-### Prerequisites
+### One-click
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ranajahanzaib/waichat)
 
-List anything the user needs to have installed before they can use this project.
+Click the **Deploy to Cloudflare** button above. Cloudflare will:
 
-### Installation
+1. Fork this repo into your GitHub account
+2. Provision a D1 database and Workers AI binding automatically
+3. Build and deploy the app to your `*.workers.dev` subdomain
+
+That's it. No CLI, no config files to edit.
+
+### Manual (CLI)
 
 ```bash
-# Clone the repository
-git clone https://github.com/username/repo-name.git
-cd repo-name
-
-# Install dependencies
-# add your install command here
+git clone https://github.com/ranajahanzaib/waichat.git
+cd waichat
+npm install
+npx wrangler deploy
 ```
 
-### Usage
+Requires a [Cloudflare account](https://dash.cloudflare.com/sign-up) and [Wrangler](https://developers.cloudflare.com/workers/wrangler/).
 
-```bash
-# Add your run command here
-```
+---
+
+## Auth (Optional)
+
+WaiChat does not include built-in authentication. For private deployments, use [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) to gate your app behind a login - supports Google, GitHub, and one-time email PIN out of the box, for free (up to 50 users).
+
+See [docs/self-hosting.md](./docs/self-hosting.md) for a step-by-step setup guide.
+
+---
+
+## Storage
+
+| Mode | How it works |
+|---|---|
+| **Cloud** | Chat history stored in Cloudflare D1 (SQLite). Default. |
+| **Local** | Chat history stored in your browser's localStorage. No data leaves your device. |
+
+Toggle between modes in the app settings.
+
+---
+
+## Tech Stack
+
+- **Frontend** - React + Vite
+- **Backend** - Cloudflare Worker + [Hono](https://hono.dev/)
+- **AI** - Cloudflare Workers AI (direct binding)
+- **Database** - Cloudflare D1
+- **Auth** - Cloudflare Access
+
+---
+
+## Free Tier Limits
+
+Everything WaiChat uses fits within Cloudflare's free tier:
+
+| Service | Free allowance |
+|---|---|
+| Workers AI | 10,000 neurons/day |
+| Workers | 100,000 requests/day |
+| D1 | 5M reads · 100K writes/day · 5GB storage |
+| Pages/Workers hosting | Unlimited |
+
+For personal use, you'll never come close to these limits.
+
+---
 
 ## Contributing
 
