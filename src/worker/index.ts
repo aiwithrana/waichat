@@ -123,10 +123,6 @@ app.get("/api/models", async (c) => {
       success: boolean;
     };
 
-    if (data.result?.length > 0) {
-      console.log("[/api/models] sample:", JSON.stringify(data.result[0]));
-    }
-
     const models = data.result
       .map((m) => ({ id: m.name, name: formatModelName(m.name) }))
       .sort((a, b) => scoreModel(b.id) - scoreModel(a.id));
