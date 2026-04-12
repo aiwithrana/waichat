@@ -41,8 +41,7 @@ function scoreModel(id: string): number {
   // Penalize old models
   if (id.includes("v0.1") || id.includes("v0.2")) score -= 20;
   if (id.includes("llama-2")) score -= 30;
-  if (id.includes("1.5b") || id.includes("0.5b") || id.includes("1.1b"))
-    score -= 15;
+  if (id.includes("1.5b") || id.includes("0.5b") || id.includes("1.1b")) score -= 15;
   if (id.includes("lora")) score -= 10;
 
   return score;
@@ -87,7 +86,7 @@ function formatModelName(id: string): string {
         coder: "Coder",
         distill: "Distill",
       };
-      return special[lower] ?? word.charAt(0).toUpperCase() + word.slice(1);
+      return special[lower] ?? (word.charAt(0).toUpperCase() + word.slice(1));
     })
     .join(" ");
 
@@ -108,20 +107,19 @@ app.get("/api/models", async (c) => {
         headers: {
           Authorization: `Bearer ${c.env.CLOUDFLARE_API_TOKEN}`,
         },
-      },
+      }
     );
 
     if (!res.ok) throw new Error(`Cloudflare API error: ${res.status}`);
 
-    const data = (await res.json()) as {
-      result: {
-        id: string;
-        name: string;
-        description: string;
-        task: { name: string };
-      }[];
+    const data = await res.json() as {
+      result: { id: string; name: string; description: string; task: { name: string } }[];
       success: boolean;
     };
+
+    if (data.result?.length > 0) {
+      console.log("[/api/models] sample:", JSON.stringify(data.result[0]));
+    }
 
     const models = data.result
       .map((m) => ({ id: m.name, name: formatModelName(m.name) }))
@@ -162,6 +160,16 @@ app.get("/api/conversations/:id", async (c) => {
   return c.json({ conversation, messages });
 });
 
+app.delete("/api/conversations", async (c) => {
+  await c.env.DB.prepare("DELETE FROM conversations").run();
+  return c.json({ success: true });
+});
+
+app.delete("/api/conversations", async (c) => {
+  await c.env.DB.prepare("DELETE FROM conversations").run();
+  return c.json({ success: true });
+});
+
 app.delete("/api/conversations/:id", async (c) => {
   await deleteConversation(c.env.DB, c.req.param("id"));
   return c.json({ success: true });
@@ -175,10 +183,13 @@ app.post("/api/title", async (c) => {
 });
 app.post("/api/chat", async (c) => {
   const body = await c.req.json<ChatRequest>();
-  const { conversation_id, model, messages, storage_mode } = body;
-  const isCloud = storage_mode !== "local";
-  const now = Date.now();
+  const { conversation_id, model, messages, storage_mode, system_prompt } = body;
+    const isCloud = storage_mode !== "local";
+    const now = Date.now();
 
+    const messagesWithSystem = system_prompt
+      ? [{ role: "system" as const, content: system_prompt }, ...messages]
+      : messages;
   if (isCloud) {
     // Save user message to D1
     const userMsg = messages[messages.length - 1];
@@ -193,21 +204,19 @@ app.post("/api/chat", async (c) => {
     // Auto-generate title from first user message
     if (messages.length === 1) {
       generateTitle(c.env.AI, userMsg.content).then((title) =>
-        updateConversationTitle(c.env.DB, conversation_id, title),
+        updateConversationTitle(c.env.DB, conversation_id, title)
       );
     }
   }
-  const stream = await streamAiResponse(c.env.AI, model as any, messages);
+
+  const stream = await streamAiResponse(c.env.AI, model as any, messagesWithSystem);
 
   if (isCloud) {
     const [streamForClient, streamForSave] = stream.tee();
 
     // Save assistant message and update title/timestamp after stream ends
-    const savePromise = saveAssistantMessage(
-      c.env.DB,
-      conversation_id,
-      streamForSave,
-    ).then(() => updateConversationTimestamp(c.env.DB, conversation_id));
+    const savePromise = saveAssistantMessage(c.env.DB, conversation_id, streamForSave)
+      .then(() => updateConversationTimestamp(c.env.DB, conversation_id));
 
     c.executionCtx.waitUntil(savePromise);
 
@@ -230,7 +239,7 @@ app.post("/api/chat", async (c) => {
 async function saveAssistantMessage(
   db: D1Database,
   conversationId: string,
-  stream: ReadableStream,
+  stream: ReadableStream
 ): Promise<void> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -270,16 +279,8 @@ async function saveAssistantMessage(
 
   if (fullContent) {
     await db
-      .prepare(
-        "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
-      )
-      .bind(
-        crypto.randomUUID(),
-        conversationId,
-        "assistant",
-        fullContent,
-        Date.now(),
-      )
+      .prepare("INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)")
+      .bind(crypto.randomUUID(), conversationId, "assistant", fullContent, Date.now())
       .run();
   }
 }
