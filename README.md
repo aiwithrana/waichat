@@ -10,6 +10,9 @@ A Private, Serverless AI Chat App built on [Cloudflare Workers AI](https://devel
 >
 > WaiChat is short for Workers AI Chat
 
+https://github.com/user-attachments/assets/e62c3a84-aa5d-4d24-be3f-f162115db89a
+
+
 <img width="1435" height="1182" alt="Screenshot 2026-04-12 at 11 23 44 PM" src="https://github.com/user-attachments/assets/7420a62f-09c9-4459-9d3d-9b6fca424c44" />
 
 
