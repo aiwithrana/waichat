@@ -1,10 +1,13 @@
 # WaiChat
-
+[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange.svg)]()
+[![Build](https://github.com/ranajahanzaib/WaiChat/actions/workflows/ci.yml/badge.svg)](https://github.com/ranajahanzaib/WaiChat/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-Welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 A Private, Serverless AI Chat App built on [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/). Free to run, yours to own, one click to deploy. No backend server, no third-party services, no monthly bills. Deploy in one click and start chatting.
 
+> **Alpha Software** - WaiChat is under active development. Core chat functionality works, but some features are incomplete (auth, UI improvements, mobile layout). Use for personal/testing purposes only.
+>
 > WaiChat is short for Workers AI Chat
 
 ## Features
@@ -34,8 +37,8 @@ That's it. No CLI, no config files to edit.
 ```bash
 git clone https://github.com/ranajahanzaib/waichat.git
 cd waichat
-npm install
-npx wrangler deploy
+pnpm install
+pnpm deploy
 ```
 
 Requires a [Cloudflare account](https://dash.cloudflare.com/sign-up) and [Wrangler](https://developers.cloudflare.com/workers/wrangler/).
