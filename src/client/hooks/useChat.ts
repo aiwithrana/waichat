@@ -1,10 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import type {
-  Conversation,
-  Message,
-  StorageAdapter,
-  StorageMode,
-} from "../storage";
+import type { Conversation, Message, StorageMode } from "../storage";
 import { createStorage } from "../storage";
 
 interface UseChatReturn {
@@ -38,7 +33,7 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
     try {
       const data = await storage.getConversations();
       setConversations(data);
-    } catch (e) {
+    } catch {
       setError("Failed to load conversations");
     }
   }, [storage]);
@@ -50,7 +45,7 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
         if (!data) return;
         setActiveConversation(data.conversation);
         setMessages(data.messages);
-      } catch (e) {
+      } catch {
         setError("Failed to load conversation");
       }
     },
@@ -81,13 +76,23 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
   );
 
   const sendMessage = useCallback(
-    async (content: string, model: string) => {
-      if (!activeConversation || isStreaming) return;
+    async (
+      content: string,
+      model: string,
+      conversationId: string,
+      storageMode: StorageMode,
+    ) => {
+      if (isStreaming) return;
       setError(null);
+      console.log("[sendMessage] start", {
+        conversationId,
+        storageMode,
+        content,
+      });
 
       const userMessage: Message = {
         id: crypto.randomUUID(),
-        conversation_id: activeConversation.id,
+        conversation_id: conversationId,
         role: "user",
         content,
         created_at: Date.now(),
@@ -95,7 +100,7 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
 
       const assistantMessage: Message = {
         id: crypto.randomUUID(),
-        conversation_id: activeConversation.id,
+        conversation_id: conversationId,
         role: "assistant",
         content: "",
         created_at: Date.now(),
@@ -109,13 +114,20 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
           ({ role, content }) => ({ role, content }),
         );
 
+        console.log("[sendMessage] sending fetch", {
+          conversationId,
+          storageMode,
+          messageCount: allMessages.length,
+        });
+
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            conversation_id: activeConversation.id,
+            conversation_id: conversationId,
             model,
             messages: allMessages,
+            storage_mode: storageMode,
           }),
         });
 
@@ -136,7 +148,6 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
 
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
-          // Keep the last (potentially incomplete) line in the buffer
           buffer = lines.pop() ?? "";
 
           for (const line of lines) {
@@ -159,27 +170,58 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
           }
         }
 
-        // For local storage mode, save messages manually
         await storage.saveMessage({
-          conversation_id: activeConversation.id,
+          conversation_id: conversationId,
           role: "user",
           content,
         });
         await storage.saveMessage({
-          conversation_id: activeConversation.id,
+          conversation_id: conversationId,
           role: "assistant",
           content: fullContent,
         });
 
-        // Update title after first message in local mode
-        if (messages.length === 0) {
-          const title = fullContent.split(" ").slice(0, 5).join(" ");
-          await storage.updateConversationTitle(activeConversation.id, title);
-          setConversations((prev) =>
-            prev.map((c) =>
-              c.id === activeConversation.id ? { ...c, title } : c,
-            ),
-          );
+        if (messages.length === 0 && storageMode === "local") {
+          try {
+            const res = await fetch("/api/title", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: content }),
+            });
+            const data = (await res.json()) as { title: string };
+            const title =
+              data.title ?? content.split(" ").slice(0, 5).join(" ");
+            await storage.updateConversationTitle(conversationId, title);
+            setConversations((prev) =>
+              prev.map((c) => (c.id === conversationId ? { ...c, title } : c)),
+            );
+          } catch {
+            // fallback to first few words
+            const title = content.split(" ").slice(0, 5).join(" ");
+            await storage.updateConversationTitle(conversationId, title);
+            setConversations((prev) =>
+              prev.map((c) => (c.id === conversationId ? { ...c, title } : c)),
+            );
+          }
+        }
+
+        // Refresh title from server after first message in cloud mode
+        if (messages.length === 0 && storageMode === "cloud") {
+          setTimeout(async () => {
+            try {
+              const res = await fetch(`/api/conversations/${conversationId}`);
+              if (res.ok) {
+                const data = (await res.json()) as {
+                  conversation: Conversation;
+                };
+                setConversations((prev) =>
+                  prev.map((c) =>
+                    c.id === conversationId ? data.conversation : c,
+                  ),
+                );
+              }
+            } catch {}
+          }, 3000);
         }
       } catch (e) {
         console.error("[sendMessage] error:", e);
@@ -189,7 +231,7 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
         setIsStreaming(false);
       }
     },
-    [activeConversation, isStreaming, messages, storage],
+    [isStreaming, messages, storage],
   );
 
   return {
