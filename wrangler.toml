@@ -10,11 +10,10 @@ directory = "./dist"
 # Workers AI binding
 [ai]
 binding = "AI"
-remote = true # suppresses the warning in local dev, but redundant in production
 
 # Optional: set these as secrets via `wrangler secret put` for live model fetching
 # or add to .env.local for local development
-[vars]
+# [vars]
 # CLOUDFLARE_ACCOUNT_ID = ""
 # CLOUDFLARE_API_TOKEN = ""
 
@@ -23,5 +22,5 @@ remote = true # suppresses the warning in local dev, but redundant in production
 [[d1_databases]]
 binding = "DB"
 database_name = "waichat-db"
-database_id = "6cac3c59-567a-46fe-8fc3-edd2b2fcdb5c"
+database_id = ""
 migrations_dir = "migrations"
