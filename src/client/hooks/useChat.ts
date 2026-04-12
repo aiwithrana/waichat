@@ -17,14 +17,14 @@ interface UseChatReturn {
     model: string,
     conversationId: string,
     storageMode: StorageMode,
+    systemPrompt?: string,
   ) => Promise<void>;
 }
 
 export function useChat(storageMode: StorageMode): UseChatReturn {
   const storage = useMemo(() => createStorage(storageMode), [storageMode]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeConversation, setActiveConversation] =
-    useState<Conversation | null>(null);
+  const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,207 +38,166 @@ export function useChat(storageMode: StorageMode): UseChatReturn {
     }
   }, [storage]);
 
-  const selectConversation = useCallback(
-    async (id: string) => {
-      try {
-        const data = await storage.getConversation(id);
-        if (!data) return;
-        setActiveConversation(data.conversation);
-        setMessages(data.messages);
-      } catch {
-        setError("Failed to load conversation");
-      }
-    },
-    [storage],
-  );
+  const selectConversation = useCallback(async (id: string) => {
+    try {
+      const data = await storage.getConversation(id);
+      if (!data) return;
+      setActiveConversation(data.conversation);
+      setMessages(data.messages);
+    } catch {
+      setError("Failed to load conversation");
+    }
+  }, [storage]);
 
-  const newConversation = useCallback(
-    async (model: string): Promise<Conversation> => {
-      const conversation = await storage.createConversation(model);
-      setConversations((prev) => [conversation, ...prev]);
-      setActiveConversation(conversation);
+  const newConversation = useCallback(async (model: string): Promise<Conversation> => {
+    const conversation = await storage.createConversation(model);
+    setConversations((prev) => [conversation, ...prev]);
+    setActiveConversation(conversation);
+    setMessages([]);
+    return conversation;
+  }, [storage]);
+
+  const deleteConversation = useCallback(async (id: string) => {
+    await storage.deleteConversation(id);
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (activeConversation?.id === id) {
+      setActiveConversation(null);
       setMessages([]);
-      return conversation;
-    },
-    [storage],
-  );
+    }
+  }, [storage, activeConversation]);
 
-  const deleteConversation = useCallback(
-    async (id: string) => {
-      await storage.deleteConversation(id);
-      setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeConversation?.id === id) {
-        setActiveConversation(null);
-        setMessages([]);
-      }
-    },
-    [storage, activeConversation],
-  );
+  const sendMessage = useCallback(async (
+    content: string,
+    model: string,
+    conversationId: string,
+    storageMode: StorageMode,
+    systemPrompt?: string,
+  ) => {
+    if (isStreaming) return;
+    setError(null);
 
-  const sendMessage = useCallback(
-    async (
-      content: string,
-      model: string,
-      conversationId: string,
-      storageMode: StorageMode,
-    ) => {
-      if (isStreaming) return;
-      setError(null);
-      console.log("[sendMessage] start", {
-        conversationId,
-        storageMode,
-        content,
+    const userMessage: Message = {
+      id: crypto.randomUUID(),
+      conversation_id: conversationId,
+      role: "user",
+      content,
+      created_at: Date.now(),
+    };
+
+    const assistantMessage: Message = {
+      id: crypto.randomUUID(),
+      conversation_id: conversationId,
+      role: "assistant",
+      content: "",
+      created_at: Date.now(),
+    };
+
+    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    setIsStreaming(true);
+
+    try {
+      const allMessages = [...messages, userMessage].map(({ role, content }) => ({ role, content }));
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversation_id: conversationId,
+          model,
+          messages: allMessages,
+          storage_mode: storageMode,
+          system_prompt: systemPrompt || undefined,
+        }),
       });
 
-      const userMessage: Message = {
-        id: crypto.randomUUID(),
-        conversation_id: conversationId,
-        role: "user",
-        content,
-        created_at: Date.now(),
-      };
-
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        conversation_id: conversationId,
-        role: "assistant",
-        content: "",
-        created_at: Date.now(),
-      };
-
-      setMessages((prev) => [...prev, userMessage, assistantMessage]);
-      setIsStreaming(true);
-
-      try {
-        const allMessages = [...messages, userMessage].map(
-          ({ role, content }) => ({ role, content }),
-        );
-
-        console.log("[sendMessage] sending fetch", {
-          conversationId,
-          storageMode,
-          messageCount: allMessages.length,
-        });
-
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            conversation_id: conversationId,
-            model,
-            messages: allMessages,
-            storage_mode: storageMode,
-          }),
-        });
-
-        if (!res.ok || !res.body) {
-          console.error("[sendMessage] bad response", res.status);
-          throw new Error("Chat request failed");
-        }
-        console.log("[sendMessage] streaming started");
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let fullContent = "";
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-
-          for (const line of lines) {
-            const trimmed = line.trim();
-            if (!trimmed || !trimmed.startsWith("data: ")) continue;
-            if (trimmed === "data: [DONE]") continue;
-            try {
-              const json = JSON.parse(trimmed.slice(6));
-              let token: string | undefined;
-              if (typeof json.choices?.[0]?.delta?.content === "string") {
-                token = json.choices[0].delta.content;
-              } else if (typeof json.response === "string") {
-                token = json.response;
-              }
-              if (token) {
-                fullContent += token;
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMessage.id
-                      ? { ...m, content: fullContent }
-                      : m,
-                  ),
-                );
-              }
-            } catch {}
-          }
-        }
-
-        await storage.saveMessage({
-          conversation_id: conversationId,
-          role: "user",
-          content,
-        });
-        await storage.saveMessage({
-          conversation_id: conversationId,
-          role: "assistant",
-          content: fullContent,
-        });
-
-        if (messages.length === 0 && storageMode === "local") {
-          try {
-            const res = await fetch("/api/title", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ message: content }),
-            });
-            const data = (await res.json()) as { title: string };
-            const title =
-              data.title ?? content.split(" ").slice(0, 5).join(" ");
-            await storage.updateConversationTitle(conversationId, title);
-            setConversations((prev) =>
-              prev.map((c) => (c.id === conversationId ? { ...c, title } : c)),
-            );
-          } catch {
-            // fallback to first few words
-            const title = content.split(" ").slice(0, 5).join(" ");
-            await storage.updateConversationTitle(conversationId, title);
-            setConversations((prev) =>
-              prev.map((c) => (c.id === conversationId ? { ...c, title } : c)),
-            );
-          }
-        }
-
-        // Refresh title from server after first message in cloud mode
-        if (messages.length === 0 && storageMode === "cloud") {
-          setTimeout(async () => {
-            try {
-              const res = await fetch(`/api/conversations/${conversationId}`);
-              if (res.ok) {
-                const data = (await res.json()) as {
-                  conversation: Conversation;
-                };
-                setConversations((prev) =>
-                  prev.map((c) =>
-                    c.id === conversationId ? data.conversation : c,
-                  ),
-                );
-              }
-            } catch {}
-          }, 3000);
-        }
-      } catch (e) {
-        console.error("[sendMessage] error:", e);
-        setError("Failed to send message");
-        setMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
-      } finally {
-        setIsStreaming(false);
+      if (!res.ok || !res.body) {
+        console.error("[sendMessage] bad response", res.status);
+        throw new Error("Chat request failed");
       }
-    },
-    [isStreaming, messages, storage],
-  );
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = "";
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data: ")) continue;
+          if (trimmed === "data: [DONE]") continue;
+          try {
+            const json = JSON.parse(trimmed.slice(6));
+            let token: string | undefined;
+            if (typeof json.choices?.[0]?.delta?.content === "string") {
+              token = json.choices[0].delta.content;
+            } else if (typeof json.response === "string") {
+              token = json.response;
+            }
+            if (token) {
+              fullContent += token;
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === assistantMessage.id ? { ...m, content: fullContent } : m
+                )
+              );
+            }
+          } catch {}
+        }
+      }
+
+      await storage.saveMessage({ conversation_id: conversationId, role: "user", content });
+      await storage.saveMessage({ conversation_id: conversationId, role: "assistant", content: fullContent });
+
+      if (messages.length === 0 && storageMode === "local") {
+        try {
+          const res = await fetch("/api/title", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: content }),
+          });
+          const data = await res.json() as { title: string };
+          const title = data.title ?? content.split(" ").slice(0, 5).join(" ");
+          await storage.updateConversationTitle(conversationId, title);
+          setConversations((prev) =>
+            prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
+          );
+        } catch {
+          const title = content.split(" ").slice(0, 5).join(" ");
+          await storage.updateConversationTitle(conversationId, title);
+          setConversations((prev) =>
+            prev.map((c) => (c.id === conversationId ? { ...c, title } : c))
+          );
+        }
+      }
+
+      if (messages.length === 0 && storageMode === "cloud") {
+        setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/conversations/${conversationId}`);
+            if (res.ok) {
+              const data = await res.json() as { conversation: Conversation };
+              setConversations((prev) =>
+                prev.map((c) => (c.id === conversationId ? data.conversation : c))
+              );
+            }
+          } catch {}
+        }, 3000);
+      }
+    } catch (e) {
+      console.error("[sendMessage] error:", e);
+      setError("Failed to send message");
+      setMessages((prev) => prev.filter((m) => m.id !== assistantMessage.id));
+    } finally {
+      setIsStreaming(false);
+    }
+  }, [isStreaming, messages, storage]);
 
   return {
     conversations,
