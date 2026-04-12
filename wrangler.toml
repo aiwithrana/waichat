@@ -1,6 +1,6 @@
 name = "waichat"
 main = "src/worker/index.ts"
-compatibility_date = "2025-04-01"
+compatibility_date = "2025-10-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Built React app served as static assets
@@ -10,12 +10,18 @@ directory = "./dist"
 # Workers AI binding
 [ai]
 binding = "AI"
-remote = true
+remote = true # suppresses the warning in local dev, but redundant in production
 
+# Optional: set these as secrets via `wrangler secret put` for live model fetching
+# or add to .env.local for local development
+[vars]
+# CLOUDFLARE_ACCOUNT_ID = ""
+# CLOUDFLARE_API_TOKEN = ""
 
 # D1 Database
+# Note: database_id is replaced automatically when deploying via the Deploy to Cloudflare button
 [[d1_databases]]
 binding = "DB"
 database_name = "waichat-db"
-database_id = "6cac3c59-567a-46fe-8fc3-edd2b2fcdb5c"
+database_id = "placeholder-replaced-on-deploy"
 migrations_dir = "migrations"
