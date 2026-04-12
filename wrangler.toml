@@ -23,5 +23,5 @@ remote = true # suppresses the warning in local dev, but redundant in production
 [[d1_databases]]
 binding = "DB"
 database_name = "waichat-db"
-database_id = "placeholder-replaced-on-deploy"
+database_id = "6cac3c59-567a-46fe-8fc3-edd2b2fcdb5c"
 migrations_dir = "migrations"
