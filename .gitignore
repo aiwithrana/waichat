@@ -40,6 +40,7 @@ src/client/.vite
 
 # Wrangler
 .wrangler/
+wrangler.local.toml
 
 # Vercel
 .vercel
