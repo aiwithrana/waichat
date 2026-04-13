@@ -32,48 +32,38 @@ Requires a [Cloudflare account](https://dash.cloudflare.com/sign-up) and your `C
 
 ## Authentication (Cloudflare Access)
 
-By default, WaiChat is publicly accessible to anyone with the URL. To restrict access to specific users, use Cloudflare Access - free for up to 50 users.
+By default, WaiChat is publicly accessible to anyone with the URL. To restrict access to specific users, enable Cloudflare Access directly from the Workers dashboard - free for up to 50 users, no zone or DNS configuration needed.
 
-### Setup
+### Enable Cloudflare Access
 
-**1. Add your site to Cloudflare**
+**1. Open your Worker in the Cloudflare dashboard**
 
-Your `*.workers.dev` subdomain is already on Cloudflare's network, so no additional DNS setup is needed.
+Go to [dash.cloudflare.com](https://dash.cloudflare.com) → Workers & Pages → select your WaiChat worker.
 
-**2. Enable Zero Trust**
+**2. Go to Settings → Domains & Routes**
 
-- Go to [one.dash.cloudflare.com](https://one.dash.cloudflare.com)
-- Create a free Zero Trust account if you haven't already
+You'll see two rows:
 
-**3. Create an Access Application**
+| Type | Value |
+|---|---|
+| workers.dev | `waichat.<your-subdomain>.workers.dev` |
+| Preview URLs | *(preview deployments)* |
 
-- Go to **Access → Applications → Add an application**
-- Select **Self-hosted**
-- Fill in:
-  - **Application name**: WaiChat
-  - **Application domain**: `waichat.<your-subdomain>.workers.dev`
-- Click **Next**
+**3. Enable Access on each domain**
 
-**4. Create an Access Policy**
+Click the **⋯** menu on the right of each row and toggle **Cloudflare Access** on. Repeat for Preview URLs if you want those protected too. If you add a custom domain later, enable it there as well.
 
-- **Policy name**: Allow users
-- **Action**: Allow
-- Under **Include**, add a rule:
-  - **Selector**: Emails
-  - **Value**: your email address (or a list of allowed emails)
-- Click **Next** → **Add application**
+**4. Configure your Access policy**
+
+After enabling, click the **⋯** menu again - you'll now see a **Manage Cloudflare Access** option. Click it to open the Access Control → Applications page in a new tab, where you can configure who is allowed in:
+
+- Edit the policy to allow specific emails, or connect Google, GitHub, Microsoft, or any SAML/OIDC provider under **Settings → Authentication → Login methods**
 
 **5. Test it**
 
-Visit your WaiChat URL. You'll be prompted to authenticate via a one-time email PIN. After verifying, you'll have full access.
+Visit your WaiChat URL. You'll be prompted to authenticate. After verifying, you'll have full access.
 
-### Identity Providers
-
-Instead of email PIN, you can connect Google, GitHub, Microsoft, or any SAML/OIDC provider:
-
-- Go to **Settings → Authentication → Login methods**
-- Add your preferred identity provider
-- Select it when creating your Access policy
+> **⚠️ Local Development Note:** Cloudflare Access blocks Wrangler's remote proxy session, which breaks `pnpm dev:worker`. Disable Cloudflare Access on your workers.dev domain while developing locally, then re-enable when done.
 
 ---
 
@@ -114,7 +104,6 @@ All other configuration (D1 binding, Workers AI binding) is handled automaticall
 
 ```bash
 pnpm install
-pnpm db:migrate:local    # apply D1 schema locally
 pnpm dev:worker          # start Worker on localhost:8787
 pnpm dev:client          # start Vite dev server on localhost:5173
 ```
