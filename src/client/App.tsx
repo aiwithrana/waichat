@@ -11,9 +11,53 @@ import SettingsModal from "./components/SettingsModal";
 const STORAGE_MODE_KEY = "waichat:storage-mode";
 const SYSTEM_PROMPT_KEY = "waichat:system-prompt";
 const DEFAULT_MODEL_KEY = "waichat:default-model";
+export const THEME_KEY = "waichat:theme";
 const MOBILE_BREAKPOINT = 768;
 
+export type ThemeMode = "system" | "light" | "dark";
+
 export default function App() {
+  const [theme, setTheme] = useState<ThemeMode>(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem(THEME_KEY);
+      return stored === "light" || stored === "dark" || stored === "system" ? stored : "system";
+    }
+    return "system";
+  });
+
+  const [pendingPrompt, setPendingPrompt] = useState("");
+
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.classList.remove("light", "dark");
+
+    if (theme === "system") {
+      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light";
+      root.classList.add(systemTheme);
+    } else {
+      root.classList.add(theme);
+    }
+
+    // Instantly save to localStorage whenever theme changes
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (theme !== "system") return;
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      const root = window.document.documentElement;
+      root.classList.remove("light", "dark");
+      root.classList.add(mediaQuery.matches ? "dark" : "light");
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme]);
+
   // Track the actual saved preference in localStorage separately
   const [savedStorageMode, setSavedStorageMode] = useState<StorageMode>(() => {
     if (typeof window !== "undefined") {
@@ -184,6 +228,11 @@ export default function App() {
       window.history.pushState({}, "", "/");
     } else {
       // Standard new chat in the current mode
+      // Prevent creating multiple empty chats if the current one is already empty
+      if (activeConversation && messages.length === 0) {
+        closeSidebarOnMobile();
+        return;
+      }
       await newConversation(model);
     }
     closeSidebarOnMobile();
@@ -222,139 +271,191 @@ export default function App() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100">
-      {/* Mobile Backdrop Overlay */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-20 md:hidden transition-opacity"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
-      <Sidebar
-        conversations={conversations}
-        activeId={activeConversation?.id ?? null}
-        isOpen={sidebarOpen}
-        onClose={() => setSidebarOpen(false)}
-        onSelect={handleSelectConversation}
-        onNew={handleNew}
-        onDelete={deleteConversation}
-        onSettingsOpen={() => setSettingsOpen(true)}
-        currentMode={storageMode}
-        savedMode={savedStorageMode}
+    <div className="relative flex h-screen w-full overflow-hidden font-sans text-gray-900 dark:text-white/95">
+      {/* Full-screen base layers */}
+      <div className="absolute inset-0 bg-gradient-to-br from-gray-50 to-gray-200 dark:from-transparent dark:to-transparent z-0 transition-colors duration-300" />
+      <div
+        className="absolute inset-0 z-0 hidden dark:block transition-opacity duration-300"
+        style={{
+          background:
+            "radial-gradient(circle at 15% 50%, #1a1e36, #000 50%), radial-gradient(circle at 85% 30%, #2a1635, #000 50%)",
+          backgroundColor: "#000",
+        }}
       />
 
-      <main className="flex flex-col flex-1 min-w-0">
-        <header className="flex items-center justify-between px-3 md:px-6 py-3 border-b border-gray-200 dark:border-gray-800 shrink-0 gap-2">
-          <div className="flex items-center gap-2 md:gap-3 flex-1 min-w-0">
-            {!sidebarOpen && (
-              <button
-                onClick={() => setSidebarOpen(true)}
-                className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 focus:outline-none transition-colors shrink-0"
-                aria-label="Open sidebar"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M4 6h16M4 12h16M4 18h16"
-                  />
-                </svg>
-              </button>
-            )}
-            <div className="flex-1 min-w-0">
-              <ModelPicker
-                models={models}
-                value={model}
-                onChange={handleDefaultModelChange}
-                disabled={isStreaming}
-              />
-            </div>
-          </div>
+      {/* Full-screen glassmorphism base layer */}
+      <div className="absolute inset-0 bg-white/40 dark:bg-[#1e1e20]/75 backdrop-blur-[40px] backdrop-saturate-[180%] pointer-events-none z-0 transition-colors duration-300" />
 
-          <div className="relative storage-dropdown-container shrink-0">
-            <button
-              onClick={() => setStorageDropdownOpen(!storageDropdownOpen)}
-              className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 border border-gray-200 dark:border-gray-700 rounded-lg px-2 md:px-3 py-1.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
-              aria-label="Toggle storage mode"
-              aria-expanded={storageDropdownOpen}
-              aria-haspopup="true"
-            >
-              <span className="text-base md:text-sm leading-none">
-                {storageMode === "cloud" ? "☁️" : "💾"}
-              </span>
-              <span className="hidden md:inline">
-                {storageMode === "cloud" ? "Cloud" : "Local"}
-              </span>
-              <svg className="hidden md:block w-3 h-3" viewBox="0 0 12 12" fill="currentColor">
-                <path d="M6 8L1 3h10z" />
-              </svg>
-            </button>
-
-            <div
-              role="menu"
-              className={`absolute right-0 top-full mt-1 w-56 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg overflow-hidden transition-all duration-200 z-10 origin-top-right ${
-                storageDropdownOpen
-                  ? "opacity-100 scale-100 visible"
-                  : "opacity-0 scale-95 invisible"
-              }`}
-            >
-              {(["cloud", "local"] as StorageMode[]).map((mode) => (
-                <button
-                  key={mode}
-                  role="menuitem"
-                  onClick={() => handleStorageToggle(mode)}
-                  className={`w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${
-                    storageMode === mode ? "bg-indigo-50 dark:bg-indigo-950" : ""
-                  }`}
-                >
-                  <span className="text-base mt-0.5">{mode === "cloud" ? "☁️" : "💾"}</span>
-                  <div>
-                    <p
-                      className={`text-sm font-medium ${storageMode === mode ? "text-indigo-600 dark:text-indigo-400" : "text-gray-700 dark:text-gray-300"}`}
-                    >
-                      {mode === "cloud" ? "Cloud (D1)" : "Local (Browser)"}
-                    </p>
-                    <p className="text-xs text-gray-400 dark:text-gray-600 mt-0.5">
-                      {mode === "cloud"
-                        ? "Syncs across devices via Cloudflare D1"
-                        : "Stays in your browser, never uploaded"}
-                    </p>
-                  </div>
-                  {storageMode === mode && (
-                    <span className="ml-auto text-indigo-600 dark:text-indigo-400 text-xs mt-1">
-                      ✓
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-        </header>
-
-        {error && (
-          <div className="mx-6 mt-4 px-4 py-2 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-600 dark:text-red-400">
-            {error}
-          </div>
+      {/* Interactive Content Wrapper */}
+      <div className="relative z-10 flex h-full w-full">
+        {/* Mobile Backdrop Overlay */}
+        {sidebarOpen && (
+          <div
+            className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-sm z-20 md:hidden transition-opacity"
+            onClick={() => setSidebarOpen(false)}
+          />
         )}
 
-        <MessageList messages={messages} isStreaming={isStreaming} />
-        <ChatInput onSend={handleSend} disabled={isStreaming} />
-      </main>
+        <Sidebar
+          conversations={conversations}
+          activeId={activeConversation?.id ?? null}
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          onSelect={handleSelectConversation}
+          onNew={handleNew}
+          onDelete={deleteConversation}
+          onSettingsOpen={() => setSettingsOpen(true)}
+          currentMode={storageMode}
+          savedMode={savedStorageMode}
+        />
 
-      <SettingsModal
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        storageMode={storageMode}
-        onStorageModeChange={handleStorageToggle}
-        defaultModel={model}
-        onDefaultModelChange={handleDefaultModelChange}
-        systemPrompt={systemPrompt}
-        onSystemPromptChange={handleSystemPromptChange}
-        models={models}
-        onClearConversations={handleClearConversations}
-      />
+        <main className="flex flex-col flex-1 min-w-0 h-full">
+          {/* TOPBAR */}
+          <header className="flex items-center justify-between px-5 py-4 border-b-[0.5px] border-black/5 dark:border-white/10 shrink-0 transition-colors duration-300">
+            <div className="flex items-center gap-3">
+              {!sidebarOpen && (
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="w-8 h-8 rounded-md flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-black/5 dark:text-white/65 dark:hover:text-white/95 dark:hover:bg-white/5 transition-colors focus:outline-none"
+                  aria-label="Open sidebar"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    className="w-5 h-5 stroke-2"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="9" y1="3" x2="9" y2="21"></line>
+                  </svg>
+                </button>
+              )}
+
+              <div className="flex items-center gap-2 bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 border-[0.5px] border-black/5 dark:border-white/10 rounded-full pl-3 pr-2 py-1.5 transition-all">
+                <div className="w-2 h-2 rounded-full bg-[#0A84FF]"></div>
+                <div className="flex-1 min-w-0">
+                  <ModelPicker
+                    models={models}
+                    value={model}
+                    onChange={handleDefaultModelChange}
+                    disabled={isStreaming}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="relative storage-dropdown-container shrink-0">
+                <button
+                  onClick={() => setStorageDropdownOpen(!storageDropdownOpen)}
+                  className="flex items-center gap-2 bg-black/5 hover:bg-black/10 dark:bg-white/5 dark:hover:bg-white/10 border-[0.5px] border-black/5 dark:border-white/10 rounded-full px-3 py-1.5 text-gray-700 hover:text-gray-900 dark:text-white/65 dark:hover:text-white/95 text-xs md:text-sm font-medium cursor-pointer transition-all focus:outline-none"
+                  aria-expanded={storageDropdownOpen}
+                >
+                  {storageMode === "cloud" ? (
+                    <div className="w-2 h-2 rounded-full bg-[#34C759] shadow-[0_0_4px_rgba(52,199,89,0.3)] dark:shadow-[0_0_4px_rgba(52,199,89,0.5)]"></div>
+                  ) : (
+                    <div className="w-2 h-2 rounded-full bg-[#FF9F0A] shadow-[0_0_4px_rgba(255,159,10,0.3)] dark:shadow-[0_0_4px_rgba(255,159,10,0.5)]"></div>
+                  )}
+                  {storageMode === "cloud" ? "Cloud" : "Local"}
+                  <svg className="w-3 h-3 ml-1" viewBox="0 0 12 12" fill="currentColor">
+                    <path d="M6 8L1 3h10z" />
+                  </svg>
+                </button>
+
+                <div
+                  role="menu"
+                  className={`absolute right-0 top-full mt-2 w-60 p-1.5 bg-white/95 dark:bg-[#1e1e20]/95 backdrop-blur-xl border-[0.5px] border-black/10 dark:border-white/10 rounded-2xl shadow-[0_10px_40px_rgba(0,0,0,0.1)] dark:shadow-[0_10px_40px_rgba(0,0,0,0.5)] overflow-hidden transition-all duration-200 z-50 origin-top-right ${
+                    storageDropdownOpen
+                      ? "opacity-100 scale-100 visible"
+                      : "opacity-0 scale-95 invisible"
+                  }`}
+                >
+                  {(["cloud", "local"] as StorageMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      role="menuitem"
+                      onClick={() => handleStorageToggle(mode)}
+                      className={`w-full flex flex-col items-start px-3 py-2.5 text-left rounded-xl transition-all duration-200 cursor-pointer ${
+                        storageMode === mode
+                          ? "bg-[#0A84FF]/10 dark:bg-[#0A84FF]/20"
+                          : "hover:bg-black/5 dark:hover:bg-white/10"
+                      }`}
+                    >
+                      <p
+                        className={`text-[13px] md:text-sm font-medium ${
+                          storageMode === mode
+                            ? "text-[#0A84FF] dark:text-[#3A9FFF]"
+                            : "text-gray-900 dark:text-white/95"
+                        }`}
+                      >
+                        {mode === "cloud" ? "Cloud (D1)" : "Local (Browser)"}
+                      </p>
+                      <p
+                        className={`text-[11px] md:text-xs mt-0.5 ${
+                          storageMode === mode
+                            ? "text-[#0A84FF]/70 dark:text-[#3A9FFF]/70"
+                            : "text-gray-500 dark:text-white/40"
+                        }`}
+                      >
+                        {mode === "cloud" ? "Syncs across devices" : "Stays in your browser"}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={() => handleNew(storageMode)}
+                className="w-8 h-8 rounded-md flex items-center justify-center text-gray-500 hover:text-gray-900 hover:bg-black/5 dark:text-white/65 dark:hover:text-white/95 dark:hover:bg-white/5 transition-colors focus:outline-none"
+                title="New Chat"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  className="w-5 h-5 stroke-2"
+                >
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+              </button>
+            </div>
+          </header>
+
+          {error && (
+            <div className="mx-6 mt-4 px-4 py-3 bg-red-100/50 dark:bg-red-900/30 border border-red-200 dark:border-red-500/30 rounded-lg text-sm text-red-600 dark:text-red-400">
+              {error}
+            </div>
+          )}
+
+          <MessageList
+            messages={messages}
+            isStreaming={isStreaming}
+            onSelectPrompt={setPendingPrompt}
+          />
+          <ChatInput
+            onSend={handleSend}
+            disabled={isStreaming}
+            initialValue={pendingPrompt}
+            onClearInitialValue={() => setPendingPrompt("")}
+          />
+        </main>
+
+        <SettingsModal
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          storageMode={storageMode}
+          onStorageModeChange={handleStorageToggle}
+          defaultModel={model}
+          onDefaultModelChange={handleDefaultModelChange}
+          systemPrompt={systemPrompt}
+          onSystemPromptChange={handleSystemPromptChange}
+          models={models}
+          onClearConversations={handleClearConversations}
+          theme={theme}
+          onThemeChange={setTheme}
+        />
+      </div>
     </div>
   );
 }
