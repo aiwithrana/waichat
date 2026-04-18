@@ -1,0 +1,96 @@
+# ==============================================================================
+# Workflow: Update WaiChat
+# Description: Deploys the latest WaiChat release to your live Cloudflare
+#              instance with a single click. Choose between stable releases or
+#              pre-releases (alpha/beta). Automatically skips if you're already
+#              on the target version, and aborts safely on any merge conflict
+#              rather than pushing a broken state.
+#              NOTE: This workflow is a no-op in the upstream WaiChat repo.
+# ==============================================================================
+name: Update WaiChat
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_track:
+        description: "Which version do you want to update to?"
+        required: true
+        default: "latest-stable"
+        type: choice
+        options:
+          - latest-stable
+          - latest-prerelease (alpha/beta)
+
+permissions:
+  contents: write
+
+jobs:
+  update-app:
+    runs-on: ubuntu-latest
+    if: github.repository != 'ranajahanzaib/WaiChat'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream repository
+        run: git remote add upstream https://github.com/ranajahanzaib/WaiChat.git
+
+      - name: Fetch upstream tags
+        run: git fetch upstream --tags
+
+      - name: Determine Target Release Tag
+        id: get_tag
+        run: |
+          if [ "${{ github.event.inputs.update_track }}" == "latest-stable" ]; then
+            TAG=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/ranajahanzaib/WaiChat/releases/latest | jq -r .tag_name)
+          else
+            TAG=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/ranajahanzaib/WaiChat/releases | jq -r '.[0].tag_name')
+          fi
+
+          if [ "$TAG" == "null" ] || [ -z "$TAG" ]; then
+            echo "Error: Could not find a matching release tag."
+            exit 1
+          fi
+
+          echo "TARGET_TAG=$TAG" >> $GITHUB_ENV
+          echo "Updating to tag: $TAG"
+
+      - name: Check if already up to date
+        id: version_check
+        run: |
+          CURRENT=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "unknown")
+          echo "Current version: $CURRENT"
+          echo "Target version:  ${{ env.TARGET_TAG }}"
+          if [ "$CURRENT" == "${{ env.TARGET_TAG }}" ]; then
+            echo "ALREADY_UP_TO_DATE=true" >> $GITHUB_ENV
+          else
+            echo "ALREADY_UP_TO_DATE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Merge Release Tag
+        if: env.ALREADY_UP_TO_DATE == 'false'
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          if ! git merge ${{ env.TARGET_TAG }} --allow-unrelated-histories \
+               -m "chore: update WaiChat to ${{ env.TARGET_TAG }}"; then
+            echo "Error: Merge conflict detected. Aborting update."
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Push updates
+        if: env.ALREADY_UP_TO_DATE == 'false'
+        run: git push origin HEAD
+
+      - name: Report status
+        run: |
+          if [ "${{ env.ALREADY_UP_TO_DATE }}" == "true" ]; then
+            echo "Already on ${{ env.TARGET_TAG }}. No update needed."
+          else
+            echo "Successfully updated to ${{ env.TARGET_TAG }}."
+          fi

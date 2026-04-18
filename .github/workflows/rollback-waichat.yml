@@ -1,0 +1,65 @@
+# ==============================================================================
+# Workflow: Rollback WaiChat
+# Description: Reverts your live Cloudflare instance to a previously released
+#              version by entering its exact tag (e.g. v0.1.1-alpha). Uses a
+#              forward commit instead of force-pushing to keep history intact
+#              and trigger a clean Cloudflare redeployment. Skips the push if
+#              you're already on the specified version.
+#              NOTE: This workflow is a no-op in the upstream WaiChat repo.
+# ==============================================================================
+name: "Rollback WaiChat"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: "Enter the exact release tag to rollback to (e.g., v0.1.1-alpha)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  rollback-app:
+    runs-on: ubuntu-latest
+    if: github.repository != 'ranajahanzaib/WaiChat'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream repository
+        run: git remote add upstream https://github.com/ranajahanzaib/WaiChat.git
+
+      - name: Fetch upstream tags
+        run: git fetch upstream --tags
+
+      - name: Perform Rollback
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+
+          TARGET="${{ github.event.inputs.target_version }}"
+          CURRENT=$(git describe --tags --exact-match HEAD 2>/dev/null || echo "unknown")
+
+          # 1. Verify the tag actually exists to prevent typos
+          if ! git rev-parse "$TARGET" >/dev/null 2>&1; then
+            echo "Error: Tag '$TARGET' does not exist upstream."
+            exit 1
+          fi
+
+          echo "Rolling back from '$CURRENT' to '$TARGET'..."
+
+          # 2. Force the working directory to perfectly match the old tag
+          git restore --source="$TARGET" --staged --worktree .
+
+          # 3. Commit only if there are staged changes (i.e. not already at this version)
+          if git diff --cached --quiet; then
+            echo "Already at $TARGET. No rollback commit needed."
+          else
+            git commit -m "chore: rollback WaiChat to $TARGET"
+            git push origin HEAD
+            echo "Rollback to $TARGET complete."
+          fi

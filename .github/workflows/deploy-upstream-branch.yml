@@ -1,0 +1,62 @@
+# ==============================================================================
+# Workflow: Deploy Upstream Branch
+# Description: Deploys a specific upstream branch directly to your live
+#              Cloudflare instance. Useful for previewing in-progress features
+#              or PRs without spawning a new repository. Fetches the target
+#              branch from upstream and merges it into your main branch,
+#              triggering a full Cloudflare redeployment.
+#              NOTE: This workflow is a no-op in the upstream WaiChat repo.
+# ==============================================================================
+name: "Dev: Test Upstream Branch"
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Which upstream branch do you want to test? (e.g., main, feat/ui-overhaul)"
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  test-branch:
+    runs-on: ubuntu-latest
+    if: github.repository != 'ranajahanzaib/WaiChat'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Add upstream repository
+        run: git remote add upstream https://github.com/ranajahanzaib/WaiChat.git
+
+      - name: Validate branch name
+        run: |
+          BRANCH="${{ github.event.inputs.target_branch }}"
+          if [[ ! "$BRANCH" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+            echo "Error: Invalid branch name '$BRANCH'. Only alphanumeric characters, '/', '_', '-', and '.' are allowed."
+            exit 1
+          fi
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+
+      - name: Fetch upstream branch
+        run: git fetch upstream ${{ env.BRANCH }}
+
+      - name: Merge Upstream Branch
+        run: |
+          git config --global user.name "GitHub Action Bot"
+          git config --global user.email "action@github.com"
+          echo "Merging upstream/${{ env.BRANCH }} into local main..."
+          if ! git merge FETCH_HEAD --allow-unrelated-histories \
+               -m "chore: dev testing upstream branch ${{ env.BRANCH }}"; then
+            echo "Error: Merge conflict detected. Aborting."
+            git merge --abort
+            exit 1
+          fi
+
+      - name: Push changes to trigger deployment
+        run: git push origin HEAD
