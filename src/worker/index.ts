@@ -6,7 +6,9 @@ import {
   deleteConversation,
   getConversation,
   getConversations,
+  getMessageById,
   getMessages,
+  getSiblingCount,
   saveMessage,
   updateConversationTimestamp,
   updateConversationTitle,
@@ -174,6 +176,96 @@ app.delete("/api/conversations/:id", async (c) => {
   return c.json({ success: true });
 });
 
+// Delete a single message (with cascade / soft-delete logic)
+app.delete("/api/conversations/:conversationId/messages/:messageId", async (c) => {
+  const { conversationId, messageId } = c.req.param();
+  const db = c.env.DB;
+
+  try {
+    const msg = await getMessageById(db, messageId);
+    if (!msg || msg.conversation_id !== conversationId) {
+      return c.json({ error: "Message not found" }, 404);
+    }
+
+    const deletedIds: string[] = [];
+    const softDeletedIds: string[] = [];
+    const statements: D1PreparedStatement[] = [];
+
+    if (msg.role === "user") {
+      // Deleting a user message also removes the assistant turn below it.
+      const allMessages = await getMessages(db, conversationId);
+      const userIdx = allMessages.findIndex((m) => m.id === messageId);
+
+      // Find the next assistant original message (no parent_id) after this user message
+      for (let i = userIdx + 1; i < allMessages.length; i++) {
+        const m = allMessages[i];
+        if (m.role === "user") break; // hit the next user turn, stop
+        if (m.role === "assistant" && !m.parent_id) {
+          // Delete all retry siblings of this assistant message
+          const siblings = allMessages.filter((s) => s.parent_id === m.id);
+          for (const s of siblings) {
+            statements.push(db.prepare("DELETE FROM messages WHERE id = ?").bind(s.id));
+            deletedIds.push(s.id);
+          }
+          // Delete the parent assistant message itself
+          statements.push(db.prepare("DELETE FROM messages WHERE id = ?").bind(m.id));
+          deletedIds.push(m.id);
+          break;
+        }
+      }
+
+      // Delete the user message
+      statements.push(db.prepare("DELETE FROM messages WHERE id = ?").bind(messageId));
+      deletedIds.push(messageId);
+    } else {
+      // Assistant message
+      if (msg.parent_id) {
+        // This is a retry sibling - hard-delete it
+        statements.push(db.prepare("DELETE FROM messages WHERE id = ?").bind(messageId));
+        deletedIds.push(messageId);
+
+        // Check if the parent is now orphaned
+        const remaining = await getSiblingCount(db, msg.parent_id);
+        // remaining includes the message we're about to delete, so check <= 1
+        if (remaining <= 1) {
+          // Check if parent was soft-deleted
+          const parent = await getMessageById(db, msg.parent_id);
+          if (parent && parent.deleted_at) {
+            // Parent was soft-deleted and has no siblings left - fully remove it
+            statements.push(db.prepare("DELETE FROM messages WHERE id = ?").bind(msg.parent_id));
+            deletedIds.push(msg.parent_id);
+          }
+        }
+      } else {
+        // This is a parent (original) assistant message
+        const siblingCount = await getSiblingCount(db, msg.id);
+        if (siblingCount > 0) {
+          // Has retry siblings - soft-delete (preserve for parent_id references)
+          statements.push(
+            db.prepare("UPDATE messages SET content = '', deleted_at = ? WHERE id = ?").bind(Date.now(), msg.id),
+          );
+          softDeletedIds.push(msg.id);
+        } else {
+          // Solo message - hard-delete
+          statements.push(db.prepare("DELETE FROM messages WHERE id = ?").bind(msg.id));
+          deletedIds.push(msg.id);
+        }
+      }
+    }
+
+    // Execute all mutations in a single batch round-trip
+    statements.push(
+      db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").bind(Date.now(), conversationId),
+    );
+    await db.batch(statements);
+
+    return c.json({ success: true, deletedIds, softDeletedIds });
+  } catch (e) {
+    console.error("[DELETE /message] error:", e);
+    return c.json({ error: "Failed to delete message" }, 500);
+  }
+});
+
 // Title generation (used by local mode)
 app.post("/api/title", async (c) => {
   const { message } = await c.req.json<{ message: string }>();
@@ -183,7 +275,16 @@ app.post("/api/title", async (c) => {
 
 app.post("/api/chat", async (c) => {
   const body = await c.req.json<ChatRequest>();
-  const { conversation_id, model, messages, storage_mode, system_prompt, parent_id } = body;
+  const {
+    conversation_id,
+    model,
+    messages,
+    storage_mode,
+    system_prompt,
+    parent_id,
+    user_message_id,
+    assistant_message_id,
+  } = body;
   const isCloud = storage_mode !== "local";
   const isRetry = !!parent_id;
   const now = Date.now();
@@ -197,7 +298,7 @@ app.post("/api/chat", async (c) => {
     // Save user message to D1 (only for new messages, not retries)
     const userMsg = messages[messages.length - 1];
     await saveMessage(c.env.DB, {
-      id: crypto.randomUUID(),
+      id: user_message_id || crypto.randomUUID(),
       conversation_id,
       role: "user",
       content: userMsg.content,
@@ -276,7 +377,7 @@ app.post("/api/chat", async (c) => {
         // Save whatever we got
         try {
           await saveMessage(c.env.DB, {
-            id: crypto.randomUUID(),
+            id: assistant_message_id || crypto.randomUUID(),
             conversation_id,
             role: "assistant",
             content: fullContent,
