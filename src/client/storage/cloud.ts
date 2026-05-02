@@ -52,5 +52,22 @@ export class CloudStorage implements StorageAdapter {
     const data = (await res.json()) as { deletedIds: string[]; softDeletedIds: string[] };
     return { deletedIds: data.deletedIds, softDeletedIds: data.softDeletedIds };
   }
-}
 
+  async exportConversation(
+    id: string,
+  ): Promise<{ conversation: Conversation; messages: Message[] } | null> {
+    return this.getConversation(id);
+  }
+
+  async importConversation(conversation: Conversation, messages: Message[]): Promise<void> {
+    const res = await fetch("/api/conversations/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation, messages }),
+    });
+    if (!res.ok) {
+      const errorData = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(errorData.error || "Import failed");
+    }
+  }
+}
