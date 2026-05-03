@@ -7,7 +7,10 @@ import Sidebar from "./components/Sidebar";
 import { useChat } from "./hooks/useChat";
 import { DEFAULT_MODEL_ID, useModels } from "./hooks/useModels";
 import { useTransfer } from "./hooks/useTransfer";
-import type { StorageMode } from "./storage";
+import type { Conversation, Message, StorageMode } from "./storage";
+import { createStorage } from "./storage";
+import { exportWorkspace } from "./utils/exportUtils";
+import { parseImportFile } from "./utils/importUtils";
 
 const STORAGE_MODE_KEY = "waichat:storage-mode";
 const SYSTEM_PROMPT_KEY = "waichat:system-prompt";
@@ -389,6 +392,148 @@ export default function App() {
     }
   };
 
+  const handleExportWorkspace = async (scope: "local" | "cloud" | "both") => {
+    try {
+      const exportData: {
+        local?: { conversations: Conversation[]; messages: Message[] };
+        cloud?: { conversations: Conversation[]; messages: Message[] };
+        settings: Record<string, string>;
+      } = {
+        settings: {
+          system_prompt: localStorage.getItem(SYSTEM_PROMPT_KEY) || "",
+          default_model: localStorage.getItem(DEFAULT_MODEL_KEY) || "",
+        },
+      };
+
+      if (scope === "cloud" || scope === "both") {
+        const res = await fetch("/api/export");
+        if (!res.ok) throw new Error("Failed to export from cloud");
+        const cloudData = (await res.json()) as {
+          conversations: Conversation[];
+          messages: Message[];
+          settings: Record<string, string>;
+        };
+        exportData.cloud = { conversations: cloudData.conversations, messages: cloudData.messages };
+        // Merge cloud settings into exportData
+        exportData.settings = { ...exportData.settings, ...cloudData.settings };
+      }
+
+      if (scope === "local" || scope === "both") {
+        const currentStorage = createStorage("local");
+        const conversations = await currentStorage.getConversations();
+
+        // Fetch conversation details in batches to avoid overwhelming the adapter
+        const messages: Message[] = [];
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < conversations.length; i += BATCH_SIZE) {
+          const chunk = conversations.slice(i, i + BATCH_SIZE);
+          const results = await Promise.all(chunk.map((c) => currentStorage.getConversation(c.id)));
+          results.forEach((data) => {
+            if (data) messages.push(...data.messages);
+          });
+        }
+
+        exportData.local = { conversations, messages };
+      }
+
+      await exportWorkspace(scope, exportData);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to export workspace");
+    }
+  };
+
+  const handleImportWorkspace = async (file: File, onProgress: (msg: string) => void) => {
+    try {
+      const data = await parseImportFile(file);
+
+      const importToMode = async (
+        mode: StorageMode,
+        convs: Conversation[],
+        msgs: Message[],
+        prefix: string,
+      ) => {
+        const adapter = createStorage(mode);
+        const messagesByConv = msgs.reduce(
+          (acc, m) => {
+            if (!acc[m.conversation_id]) acc[m.conversation_id] = [];
+            acc[m.conversation_id].push(m);
+            return acc;
+          },
+          {} as Record<string, Message[]>,
+        );
+
+        const total = convs.length;
+        const BATCH_SIZE = 5; // Import 5 conversations at once
+        for (let i = 0; i < total; i += BATCH_SIZE) {
+          const chunk = convs.slice(i, i + BATCH_SIZE);
+          await Promise.all(
+            chunk.map(async (conv, index) => {
+              const currentIdx = i + index;
+              const convMessages = messagesByConv[conv.id] || [];
+              onProgress(`${prefix} ${currentIdx + 1}/${total}...`);
+              // adapter.importConversation is now an upsert
+              await adapter.importConversation(conv, convMessages);
+            }),
+          );
+        }
+      };
+
+      if (data.scope === "both") {
+        if (data.local)
+          await importToMode(
+            "local",
+            data.local.conversations,
+            data.local.messages,
+            "Importing Local",
+          );
+        if (data.cloud)
+          await importToMode(
+            "cloud",
+            data.cloud.conversations,
+            data.cloud.messages,
+            "Importing Cloud",
+          );
+      } else if (data.scope === "local" && data.local) {
+        await importToMode(
+          "local",
+          data.local.conversations,
+          data.local.messages,
+          "Importing Local",
+        );
+      } else if (data.scope === "cloud" && data.cloud) {
+        await importToMode(
+          "cloud",
+          data.cloud.conversations,
+          data.cloud.messages,
+          "Importing Cloud",
+        );
+      } else if (data.scope === "external" && data.external) {
+        await importToMode(
+          storageMode,
+          data.external.conversations,
+          data.external.messages,
+          "Importing",
+        );
+      }
+
+      // Apply imported settings if they exist
+      if (data.settings) {
+        if (data.settings.system_prompt) {
+          await handleSystemPromptChange(data.settings.system_prompt, syncSettings);
+        }
+        if (data.settings.default_model) {
+          await handleDefaultModelChange(data.settings.default_model, syncSettings);
+        }
+      }
+
+      await loadConversations();
+    } catch (e: any) {
+      console.error(e);
+      throw e;
+    }
+  };
+
   return (
     <div className="relative flex h-screen w-full overflow-hidden font-sans text-gray-900 dark:text-white/95">
       {/* Full-screen base layers */}
@@ -613,6 +758,8 @@ export default function App() {
           onSystemPromptChange={handleSystemPromptChange}
           models={models}
           onClearConversations={handleClearConversations}
+          onExportWorkspace={handleExportWorkspace}
+          onImportWorkspace={handleImportWorkspace}
           theme={theme}
           onThemeChange={setTheme}
         />

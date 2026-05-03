@@ -146,6 +146,47 @@ app.get("/api/conversations", async (c) => {
   return c.json(conversations);
 });
 
+// Export all workspace data (conversations, messages, settings)
+app.get("/api/export", async (c) => {
+  try {
+    const db = c.env.DB;
+
+    // Helper to fetch all rows using pagination (bypass 10k limit)
+    const fetchAll = async (query: string) => {
+      const results: any[] = [];
+      const LIMIT = 10000;
+      let offset = 0;
+      while (true) {
+        const batch = await db.prepare(`${query} LIMIT ${LIMIT} OFFSET ${offset}`).all();
+        if (!batch.results || batch.results.length === 0) break;
+        results.push(...batch.results);
+        if (batch.results.length < LIMIT) break;
+        offset += LIMIT;
+      }
+      return results;
+    };
+
+    const conversations = await fetchAll(
+      "SELECT id, title, model, created_at, updated_at FROM conversations",
+    );
+    const messages = await fetchAll(
+      "SELECT id, conversation_id, role, content, created_at, model, parent_id FROM messages WHERE deleted_at IS NULL",
+    );
+    const settingsRaw = await fetchAll("SELECT key, value FROM settings");
+
+    // Reformat settings into a simple key-value object
+    const settings: Record<string, string> = {};
+    for (const { key, value } of settingsRaw as { key: string; value: string }[]) {
+      settings[key] = value;
+    }
+
+    return c.json({ conversations, messages, settings });
+  } catch (e) {
+    console.error("[GET /api/export] error:", e);
+    return c.json({ error: "Export failed" }, 500);
+  }
+});
+
 app.post("/api/conversations", async (c) => {
   const body = await c.req.json<{ model: string }>();
   const now = Date.now();
