@@ -61,7 +61,7 @@ export class LocalStorage implements StorageAdapter {
     this.setConversations(conversations);
     localStorage.removeItem(MESSAGES_KEY(id));
   }
-  
+
   async updateConversationModel(id: string, model: string): Promise<void> {
     const conversations = this.getConversationsRaw().map((c) =>
       c.id === id ? { ...c, model, updated_at: Date.now() } : c,
@@ -99,55 +99,25 @@ export class LocalStorage implements StorageAdapter {
     const msg = messages.find((m) => m.id === messageId);
     if (!msg) return { deletedIds: [], softDeletedIds: [] };
 
-    const deletedIds: string[] = [];
-    const softDeletedIds: string[] = [];
-
-    if (msg.role === "user") {
-      // Cascade: also delete the assistant turn below
-      const userIdx = messages.findIndex((m) => m.id === messageId);
-      for (let i = userIdx + 1; i < messages.length; i++) {
-        const m = messages[i];
-        if (m.role === "user") break;
-        if (m.role === "assistant" && !m.parent_id) {
-          // Delete all retry siblings
-          const siblings = messages.filter((s) => s.parent_id === m.id);
-          for (const s of siblings) deletedIds.push(s.id);
-          deletedIds.push(m.id);
-          break;
-        }
-      }
-      deletedIds.push(messageId);
-    } else {
-      // Assistant message
-      if (msg.parent_id) {
-        // Retry sibling - hard-delete
-        deletedIds.push(messageId);
-
-        // Check if parent is now orphaned
-        const remainingSiblings = messages.filter(
-          (m) => m.parent_id === msg.parent_id && m.id !== messageId,
-        );
-        if (remainingSiblings.length === 0) {
-          const parent = messages.find((m) => m.id === msg.parent_id);
-          if (parent && parent.deleted_at) {
-            deletedIds.push(parent.id);
-          }
-        }
-      } else {
-        // Parent assistant message
-        const siblingCount = messages.filter((m) => m.parent_id === msg.id).length;
-        if (siblingCount > 0) {
-          // Soft-delete
-          softDeletedIds.push(msg.id);
-        } else {
-          // Solo — hard-delete
-          deletedIds.push(msg.id);
-        }
-      }
+    const childrenMap = new Map<string | null, string[]>();
+    for (const m of messages) {
+      const pId = m.parent_id || null;
+      const children = childrenMap.get(pId) || [];
+      children.push(m.id);
+      childrenMap.set(pId, children);
     }
 
-    // Apply deletions
-    messages = messages.filter((m) => !deletedIds.includes(m.id));
+    const descendants = new Set<string>();
+    const stack = [messageId];
+    while (stack.length > 0) {
+      const currentId = stack.pop()!;
+      if (descendants.has(currentId)) continue;
+      descendants.add(currentId);
+      const children = childrenMap.get(currentId);
+      if (children) stack.push(...children);
+    }
+
+    const softDeletedIds = Array.from(descendants);
 
     // Apply soft-deletes
     messages = messages.map((m) =>
@@ -162,7 +132,7 @@ export class LocalStorage implements StorageAdapter {
     );
     this.setConversations(conversations);
 
-    return { deletedIds, softDeletedIds };
+    return { deletedIds: [], softDeletedIds };
   }
 
   async exportConversation(
