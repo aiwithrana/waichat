@@ -17,9 +17,11 @@ Free, open-source AI chat that runs entirely on Cloudflare's free tier. 1-click 
 >
 > _**WaiChat is short for Workers AI Chat**_
 
-<img width="1572" height="1210" alt="WaiChat Screenshot A" src="https://github.com/user-attachments/assets/5de4f94c-12d6-4b4b-b15f-21d409ed61c6" />
+<img width="1578" height="1203" alt="WaiChat Screenshot A" src="https://github.com/user-attachments/assets/ec15dc6e-3ca3-42ff-ba9a-5b9a4b1faf53" />
 
-<img width="1573" height="1201" alt="WaiChat Screenshot B" src="https://github.com/user-attachments/assets/17a5868d-2844-4f34-8532-779f09eca4f6" />
+<img width="1572" height="1210" alt="WaiChat Screenshot B" src="https://github.com/user-attachments/assets/5de4f94c-12d6-4b4b-b15f-21d409ed61c6" />
+
+##
 
 https://github.com/user-attachments/assets/e62c3a84-aa5d-4d24-be3f-f162115db89a
 
@@ -27,12 +29,15 @@ https://github.com/user-attachments/assets/e62c3a84-aa5d-4d24-be3f-f162115db89a
 
 - **One-click deploy** - runs entirely on Cloudflare's free tier
 - **Modern interface** - responsive, native-feeling glassmorphic UI with Light, Dark, and System themes
-- **Multiple AI models** - switch between available Workers AI models on the fly with in-chat attribution
-- **Smart streaming** - real-time output featuring beautifully parsed, collapsible `<think>` blocks for reasoning models
-- **Flexible workspaces** - instantly toggle between cloud (Cloudflare D1) and local (browser localStorage) environments
-- **Chat management** - collapsible sidebar, auto-generated titles, one-click copy actions, and deep-linked URLs
+- **Multiple AI models** - switch between available Workers AI models on the fly, with separate default and active model settings, in-chat attribution, and deprecated models automatically excluded
+- **Smart streaming** - real-time output with beautifully parsed, collapsible `<think>` blocks for reasoning models, stop generation at any time, and retry or edit-and-regenerate any message
+- **Rich message rendering** - enhanced Markdown support with syntax-highlighted, actionable code blocks
+- **Flexible workspaces** - instantly toggle between cloud (Cloudflare D1) and local (browser localStorage) environments, with full conversation portability between the two
+- **System prompts** - per-workspace system prompt support with optional cloud sync
+- **Branching conversations** - navigate and restore previous conversation states via history branching
+- **Chat management** - collapsible sidebar, auto-generated titles, deep-linked URLs, per-message deletion, and one-click copy for prompts and responses
+- **Export / Import** - back up and restore your entire workspace data
 - **Auth-ready** - works out of the box with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) for zero-trust private deployments
-
 ## Deploy
 
 ### Recommended: Fork → Deploy to Cloudflare
