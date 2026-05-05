@@ -13,7 +13,7 @@
 
 Free, open-source AI chat that runs entirely on Cloudflare's free tier. 1-click deploy. Powered by the latest open-source models via Workers AI.
 
-> _WaiChat is in active development. Core chat is functional, but authentication and UI/UX are still being refined. Use for testing/personal purposes only. Track progress or suggest fixes [here](https://github.com/users/ranajahanzaib/projects/33/views/3)._
+> _WaiChat is in active development. Core chat is functional, but authentication and UI/UX are still being refined. Use for testing/personal purposes only. Suggest feature/fixes [here](https://github.com/ranajahanzaib/waichat/issues/new) and track progress [here](https://github.com/users/ranajahanzaib/projects/33/views/8)._
 >
 > _**WaiChat is short for Workers AI Chat**_
 
@@ -38,6 +38,7 @@ https://github.com/user-attachments/assets/e62c3a84-aa5d-4d24-be3f-f162115db89a
 - **Chat management** - collapsible sidebar, auto-generated titles, deep-linked URLs, per-message deletion, and one-click copy for prompts and responses
 - **Export / Import** - back up and restore your entire workspace data
 - **Auth-ready** - works out of the box with [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/policies/access/) for zero-trust private deployments
+
 ## Deploy
 
 ### Recommended: Fork → Deploy to Cloudflare
