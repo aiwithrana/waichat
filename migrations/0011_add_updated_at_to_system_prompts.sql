@@ -1,0 +1,2 @@
+-- updated_at is now included in 0008_add_system_prompts.sql.
+-- This migration is a no-op kept for environments that applied 0008 before it was consolidated.

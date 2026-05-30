@@ -16,13 +16,44 @@ import { exportWorkspace } from "./utils/exportUtils";
 import { parseImportFile } from "./utils/importUtils";
 
 const STORAGE_MODE_KEY = "waichat:storage-mode";
-const SYSTEM_PROMPT_KEY = "waichat:system-prompt";
 const SYNC_SETTINGS_KEY = "waichat:sync-settings";
 const DEFAULT_MODEL_KEY = "waichat:default-model";
+const SYSTEM_PROMPTS_KEY = "waichat:system-prompts";
 export const THEME_KEY = "waichat:theme";
 const MOBILE_BREAKPOINT = 768;
 
+export interface SystemPrompt {
+  id: string;
+  user_id: string;
+  name: string;
+  content: string;
+  created_at: number;
+  updated_at?: number | null;
+}
+
 export type ThemeMode = "system" | "light" | "dark";
+
+function generateUUID(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** Pure read of stored system prompts — no side effects. */
+function readSystemPromptsFromStorage(): SystemPrompt[] {
+  try {
+    const stored = localStorage.getItem(SYSTEM_PROMPTS_KEY);
+    const parsed = stored ? JSON.parse(stored) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function App() {
   const toast = useToast();
@@ -100,9 +131,10 @@ export default function App() {
   const [defaultModel, setDefaultModel] = useState(
     () => localStorage.getItem(DEFAULT_MODEL_KEY) ?? DEFAULT_MODEL_ID,
   );
-  const [systemPrompt, setSystemPrompt] = useState(
-    () => localStorage.getItem(SYSTEM_PROMPT_KEY) ?? "",
+  const [systemPrompts, setSystemPrompts] = useState<SystemPrompt[]>(
+    () => readSystemPromptsFromStorage(),
   );
+  const [selectedPromptId, setSelectedPromptId] = useState<string | null>(null);
   const [syncSettings, setSyncSettings] = useState(
     () =>
       (localStorage.getItem(SYNC_SETTINGS_KEY) ??
@@ -143,6 +175,17 @@ export default function App() {
   useEffect(() => {
     activeConversationIdRef.current = activeConversation?.id || null;
   }, [activeConversation?.id]);
+
+  // Sync selected prompt with the active conversation's stored system_prompt_id.
+  // Covers all cases: initial URL load, conversation switch, new-chat clear, and
+  // new conversation creation (which comes back from storage with system_prompt_id set).
+  useEffect(() => {
+    if (activeConversation) {
+      setSelectedPromptId(activeConversation.system_prompt_id ?? null);
+    } else {
+      setSelectedPromptId(null);
+    }
+  }, [activeConversation?.id, activeConversation?.system_prompt_id]);
 
   const handleTempExpiryChange = useCallback((val: string) => {
     setTempExpiry(val);
@@ -195,6 +238,34 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loadConversations, tempExpiry, clearConversation]);
 
+  // One-time migration: import legacy waichat:system-prompt into the library
+  useEffect(() => {
+    try {
+      const legacyPrompt = localStorage.getItem("waichat:system-prompt");
+      if (legacyPrompt !== null) {
+        if (legacyPrompt.trim()) {
+          const now = Date.now();
+          const migrated: SystemPrompt = {
+            id: generateUUID(),
+            user_id: "default",
+            name: "Default Prompt",
+            content: legacyPrompt.trim(),
+            created_at: now,
+            updated_at: now,
+          };
+          const current = readSystemPromptsFromStorage();
+          const updated = [...current, migrated];
+          localStorage.setItem(SYSTEM_PROMPTS_KEY, JSON.stringify(updated));
+          setSystemPrompts(updated);
+        }
+        // Always remove so the migration never runs again, even for empty/whitespace values
+        localStorage.removeItem("waichat:system-prompt");
+      }
+    } catch (err) {
+      console.error("Failed to migrate legacy system prompt:", err);
+    }
+  }, []);
+
   const isStreamingHere =
     isStreaming &&
     activeConversation?.id === streamingConversationId &&
@@ -210,22 +281,81 @@ export default function App() {
     retryPendingCloudDeletes();
   }, [loadConversations, retryPendingCloudDeletes]);
 
-  // Sync System Prompt from Cloud if enabled
+  // Load system prompts from cloud if sync enabled, merging local-only prompts up first
   useEffect(() => {
-    if (syncSettings) {
-      fetch("/api/settings/system_prompt")
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to fetch system prompt");
-          return res.json() as Promise<{ value?: string }>;
-        })
-        .then((data) => {
-          if (data.value != null && data.value !== systemPrompt) {
-            setSystemPrompt(data.value);
-            localStorage.setItem(SYSTEM_PROMPT_KEY, data.value);
-          }
-        })
-        .catch((err) => console.error("Cloud sync error (system_prompt):", err));
-    }
+    if (!syncSettings) return;
+    let active = true;
+
+    const syncPrompts = async () => {
+      try {
+        const res = await fetch("/api/system-prompts");
+        if (!res.ok) throw new Error("Failed to fetch system prompts");
+        const cloudPrompts = (await res.json()) as SystemPrompt[];
+        if (!active) return;
+
+        const cloudPromptsMap = new Map(cloudPrompts.map((p) => [p.id, p]));
+
+        // Read local prompts directly from storage to avoid stale closure
+        let localPrompts: SystemPrompt[] = [];
+        try {
+          const stored = localStorage.getItem(SYSTEM_PROMPTS_KEY);
+          const parsed = stored ? JSON.parse(stored) : [];
+          localPrompts = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          localPrompts = [];
+        }
+
+        // Upload prompts that are missing from cloud OR are strictly newer locally
+        // (using updated_at to avoid overwriting changes made on other devices)
+        const localOnlyOrModified = localPrompts.filter((p) => {
+          const cloud = cloudPromptsMap.get(p.id);
+          if (!cloud) return true;
+          return (p.updated_at ?? p.created_at) > (cloud.updated_at ?? cloud.created_at);
+        });
+        let hasUploadError = false;
+        await Promise.all(
+          localOnlyOrModified.map(async (p) => {
+            try {
+              const postRes = await fetch("/api/system-prompts", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: p.id, name: p.name, content: p.content, created_at: p.created_at, updated_at: p.updated_at }),
+              });
+              if (!postRes.ok) throw new Error(`Failed to sync prompt: ${p.name}`);
+            } catch (err) {
+              console.error(err);
+              hasUploadError = true;
+            }
+          }),
+        );
+        // Abort before overwriting localStorage — any failed upload means the
+        // cloud list is incomplete and would permanently delete local-only prompts
+        if (hasUploadError) {
+          throw new Error("Some prompts failed to upload. Aborting sync to prevent local data loss.");
+        }
+        if (!active) return;
+
+        // Re-fetch the merged list from cloud
+        const merged =
+          localOnlyOrModified.length > 0
+            ? await fetch("/api/system-prompts").then((r) => {
+                if (!r.ok) throw new Error("Failed to fetch merged prompts");
+                return r.json() as Promise<SystemPrompt[]>;
+              })
+            : cloudPrompts;
+        if (!active) return;
+
+        setSystemPrompts(merged);
+        localStorage.setItem(SYSTEM_PROMPTS_KEY, JSON.stringify(merged));
+      } catch (err) {
+        if (active) console.error("Cloud sync error (system_prompts):", err);
+      }
+    };
+
+    syncPrompts();
+    return () => {
+      active = false;
+    };
   }, [syncSettings]);
 
   // Sync Default Model from Cloud if enabled
@@ -387,14 +517,27 @@ export default function App() {
     closeSidebarOnMobile();
   };
 
+  // For an active conversation use its stored snapshot so library edits/deletes
+  // don't silently change the AI's behaviour mid-conversation.
+  // For a new chat (no active conversation) use the currently selected prompt.
+  const effectiveSystemPrompt = activeConversation
+    ? (activeConversation.system_prompt ?? "")
+    : (systemPrompts.find((p) => p.id === selectedPromptId)?.content ?? "");
+
   const handleSend = async (content: string) => {
     if (isStreaming) return;
     const currentModel = activeConversation?.model ?? defaultModel;
     if (!activeConversation) {
-      const convo = await newConversation(defaultModel, storageMode);
-      await sendMessage(content, defaultModel, convo.id, storageMode, systemPrompt);
+      const convo = await newConversation(defaultModel, storageMode, selectedPromptId, effectiveSystemPrompt || null);
+      await sendMessage(content, defaultModel, convo.id, storageMode, effectiveSystemPrompt);
     } else {
-      await sendMessage(content, currentModel, activeConversation.id, storageMode, systemPrompt);
+      await sendMessage(
+        content,
+        currentModel,
+        activeConversation.id,
+        storageMode,
+        effectiveSystemPrompt,
+      );
     }
     setInputValue("");
     const key = activeConversation?.id || "new";
@@ -430,22 +573,90 @@ export default function App() {
     }
   };
 
-  const handleSystemPromptChange = async (prompt: string, sync: boolean) => {
-    setSystemPrompt(prompt);
-    localStorage.setItem(SYSTEM_PROMPT_KEY, prompt);
+  const savePromptsLocally = (prompts: SystemPrompt[]) => {
+    localStorage.setItem(SYSTEM_PROMPTS_KEY, JSON.stringify(prompts));
+  };
 
-    setSyncSettings(sync);
-    localStorage.setItem(SYNC_SETTINGS_KEY, String(sync));
+  const handleAddSystemPrompt = async (name: string, content: string) => {
+    const now = Date.now();
+    const prompt: SystemPrompt = {
+      id: generateUUID(),
+      user_id: "default",
+      name,
+      content,
+      created_at: now,
+      updated_at: now,
+    };
 
-    if (sync) {
+    // Optimistic update
+    const newList = [...systemPrompts, prompt];
+    savePromptsLocally(newList);
+    setSystemPrompts(newList);
+
+    if (syncSettings) {
       try {
-        await fetch("/api/settings/system_prompt", {
+        const res = await fetch("/api/system-prompts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: prompt }),
+          body: JSON.stringify({
+            id: prompt.id,
+            name: prompt.name,
+            content: prompt.content,
+            created_at: prompt.created_at,
+            updated_at: prompt.updated_at,
+          }),
         });
+        if (!res.ok) throw new Error("Failed to save prompt");
       } catch (err) {
-        console.error("Failed to sync system prompt to cloud:", err);
+        // Local state is kept — background sync will retry on next load/sync enable
+        console.error("Failed to sync system prompt to cloud (will retry on next sync):", err);
+      }
+    }
+  };
+
+  const handleUpdateSystemPrompt = async (id: string, name: string, content: string) => {
+    const now = Date.now();
+    const updatedList = systemPrompts.map((p) =>
+      p.id === id ? { ...p, name, content, updated_at: now } : p,
+    );
+    savePromptsLocally(updatedList);
+    setSystemPrompts(updatedList);
+
+    if (syncSettings) {
+      try {
+        const res = await fetch(`/api/system-prompts/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, content, updated_at: now }),
+        });
+        if (!res.ok) throw new Error("Failed to update prompt");
+      } catch (err) {
+        // Local state is kept — background sync will retry on next load/sync enable
+        console.error("Failed to sync system prompt update to cloud (will retry on next sync):", err);
+      }
+    }
+  };
+
+  const handleDeleteSystemPrompt = async (id: string) => {
+    const originalList = [...systemPrompts];
+    const originalSelectedPromptId = selectedPromptId;
+
+    // Optimistic update
+    const filteredList = systemPrompts.filter((p) => p.id !== id);
+    savePromptsLocally(filteredList);
+    setSystemPrompts(filteredList);
+    if (selectedPromptId === id) setSelectedPromptId(null);
+
+    if (syncSettings) {
+      try {
+        const res = await fetch(`/api/system-prompts/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error("Failed to delete prompt");
+      } catch (err) {
+        console.error("Failed to delete system prompt:", err);
+        savePromptsLocally(originalList);
+        setSystemPrompts(originalList);
+        if (originalSelectedPromptId === id) setSelectedPromptId(originalSelectedPromptId);
+        throw err;
       }
     }
   };
@@ -496,11 +707,12 @@ export default function App() {
         local?: { conversations: Conversation[]; messages: Message[] };
         cloud?: { conversations: Conversation[]; messages: Message[] };
         settings: Record<string, string>;
+        systemPrompts?: SystemPrompt[];
       } = {
         settings: {
-          system_prompt: localStorage.getItem(SYSTEM_PROMPT_KEY) || "",
           default_model: localStorage.getItem(DEFAULT_MODEL_KEY) || "",
         },
+        systemPrompts: systemPrompts,
       };
 
       if (scope === "cloud" || scope === "both") {
@@ -617,11 +829,45 @@ export default function App() {
 
       // Apply imported settings if they exist
       if (data.settings) {
-        if (data.settings.system_prompt) {
-          await handleSystemPromptChange(data.settings.system_prompt, syncSettings);
-        }
         if (data.settings.default_model) {
           await handleDefaultModelChange(data.settings.default_model, syncSettings);
+        }
+      }
+
+      // Restore system prompt library — merge by updated_at so newer imported versions win
+      if (data.systemPrompts && Array.isArray(data.systemPrompts) && data.systemPrompts.length > 0) {
+        const existingMap = new Map(systemPrompts.map((p) => [p.id, p]));
+        const mergedMap = new Map(systemPrompts.map((p) => [p.id, p]));
+        const toSync: SystemPrompt[] = [];
+
+        for (const p of data.systemPrompts as SystemPrompt[]) {
+          const existing = existingMap.get(p.id);
+          if (!existing || (p.updated_at ?? p.created_at) > (existing.updated_at ?? existing.created_at)) {
+            mergedMap.set(p.id, p);
+            toSync.push(p);
+          }
+        }
+
+        if (toSync.length > 0) {
+          const merged = Array.from(mergedMap.values());
+          savePromptsLocally(merged);
+          setSystemPrompts(merged);
+          if (syncSettings) {
+            await Promise.all(
+              toSync.map(async (p) => {
+                try {
+                  const res = await fetch("/api/system-prompts", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(p),
+                  });
+                  if (!res.ok) throw new Error(`Failed to sync imported prompt: ${p.name}`);
+                } catch (err) {
+                  console.error("Failed to sync imported prompt:", err);
+                }
+              }),
+            );
+          }
         }
       }
 
@@ -831,6 +1077,26 @@ export default function App() {
             </div>
           </header>
 
+          {!activeConversation && systemPrompts.length > 0 && (
+            <div className="flex items-center justify-center gap-2 px-5 pt-4 shrink-0">
+              <label className="text-[11px] md:text-xs font-medium text-gray-500 dark:text-white/40 shrink-0">
+                System Prompt
+              </label>
+              <select
+                value={selectedPromptId ?? ""}
+                onChange={(e) => setSelectedPromptId(e.target.value || null)}
+                className="text-[11px] md:text-xs bg-black/5 dark:bg-black/20 border-[0.5px] border-black/10 dark:border-white/10 rounded-full px-3 py-1.5 text-gray-700 dark:text-white/80 outline-none focus:border-[#0A84FF] transition-colors cursor-pointer"
+              >
+                <option value="">None</option>
+                {systemPrompts.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <MessageList
             messages={messages}
             activeBranch={activeBranch}
@@ -842,7 +1108,7 @@ export default function App() {
                 messageId,
                 activeConversation?.model ?? defaultModel,
                 storageMode,
-                systemPrompt,
+                effectiveSystemPrompt,
               )
             }
             onEdit={(messageId, content) =>
@@ -853,7 +1119,7 @@ export default function App() {
                 content,
                 messageId,
                 storageMode,
-                systemPrompt,
+                effectiveSystemPrompt,
               )
             }
             onDelete={(messageId) => deleteMessage(messageId)}
@@ -881,9 +1147,15 @@ export default function App() {
           onStorageModeChange={handleStorageToggle}
           defaultModel={defaultModel}
           onDefaultModelChange={handleDefaultModelChange}
-          systemPrompt={systemPrompt}
+          systemPrompts={systemPrompts}
           syncSettings={syncSettings}
-          onSystemPromptChange={handleSystemPromptChange}
+          onSyncSettingsChange={(sync) => {
+            setSyncSettings(sync);
+            localStorage.setItem(SYNC_SETTINGS_KEY, String(sync));
+          }}
+          onAddSystemPrompt={handleAddSystemPrompt}
+          onUpdateSystemPrompt={handleUpdateSystemPrompt}
+          onDeleteSystemPrompt={handleDeleteSystemPrompt}
           models={models}
           onClearConversations={handleClearConversations}
           onExportWorkspace={handleExportWorkspace}

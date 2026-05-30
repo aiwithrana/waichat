@@ -46,7 +46,11 @@ export class LocalStorage implements StorageAdapter {
     return { conversation, messages };
   }
 
-  async createConversation(model: string): Promise<Conversation> {
+  async createConversation(
+    model: string,
+    systemPromptId?: string | null,
+    systemPromptContent?: string | null,
+  ): Promise<Conversation> {
     const now = Date.now();
     const expirySetting = localStorage.getItem(TEMP_EXPIRY_KEY) || "1h";
     let expires_at: number | undefined;
@@ -72,6 +76,8 @@ export class LocalStorage implements StorageAdapter {
       updated_at: now,
       is_temporary: this.isTemporary,
       expires_at,
+      system_prompt_id: systemPromptId ?? null,
+      system_prompt: systemPromptContent ?? null,
     };
     const conversations = this.getConversationsRaw();
     conversations.push(conversation);

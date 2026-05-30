@@ -3,7 +3,6 @@ import { cors } from "hono/cors";
 import { AVAILABLE_MODELS, generateTitle, streamAiResponse } from "./ai";
 import { getModelNotice, isModelExcluded } from "./config/model-exclusions";
 import {
-  createConversation,
   deleteConversation,
   deleteSetting,
   getConversation,
@@ -18,7 +17,7 @@ import {
   updateConversationTimestamp,
   updateConversationTitle,
 } from "./db";
-import type { ChatRequest, Env, Message, Model } from "./types";
+import type { ChatRequest, Conversation, Env, Message, Model, SystemPrompt } from "./types";
 
 // Isolate-specific in-memory cache for models
 let modelCache: { data: Model[]; timestamp: number } | null = null;
@@ -315,16 +314,40 @@ app.get("/api/export", async (c) => {
 });
 
 app.post("/api/conversations", async (c) => {
-  const body = await c.req.json<{ model: string }>();
+  const body = await c.req.json<{ model: string; system_prompt_id?: string; system_prompt?: string }>().catch(() => null);
+  if (!body || typeof body.model !== "string" || !body.model.trim()) {
+    return c.json({ error: "Model is required and must be a non-empty string" }, 400);
+  }
+  const systemPromptContent =
+    typeof body.system_prompt === "string" && body.system_prompt.trim()
+      ? body.system_prompt.trim()
+      : null;
+  if (systemPromptContent && systemPromptContent.length > 10000) {
+    return c.json({ error: "system_prompt must be 10000 characters or less" }, 400);
+  }
   const now = Date.now();
-  const conversation = {
+  const conversation: Conversation = {
     id: crypto.randomUUID(),
     title: "New Conversation",
     model: body.model,
     created_at: now,
     updated_at: now,
+    system_prompt_id: typeof body.system_prompt_id === "string" && body.system_prompt_id.trim() ? body.system_prompt_id.trim() : null,
+    system_prompt: systemPromptContent,
   };
-  await createConversation(c.env.DB, conversation);
+  await c.env.DB.prepare(
+    "INSERT INTO conversations (id, title, model, created_at, updated_at, system_prompt_id, system_prompt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  )
+    .bind(
+      conversation.id,
+      conversation.title,
+      conversation.model,
+      conversation.created_at,
+      conversation.updated_at,
+      conversation.system_prompt_id,
+      conversation.system_prompt,
+    )
+    .run();
   return c.json(conversation, 201);
 });
 
@@ -528,6 +551,95 @@ app.delete("/api/conversations/:conversationId/messages/:messageId", async (c) =
     console.error("[DELETE /message] error:", e);
     return c.json({ error: "Failed to delete message" }, 500);
   }
+});
+
+// System Prompt Library
+app.get("/api/system-prompts", async (c) => {
+  const prompts = await c.env.DB.prepare(
+    "SELECT id, user_id, name, content, created_at, updated_at FROM system_prompts ORDER BY created_at ASC",
+  )
+    .all<SystemPrompt>()
+    .then((r) => r.results);
+  return c.json(prompts);
+});
+
+app.post("/api/system-prompts", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) || {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const content = typeof body.content === "string" ? body.content.trim() : "";
+  if (!name || !content) {
+    return c.json({ error: "Name and content are required and must be non-empty strings" }, 400);
+  }
+  if (name.length > 100) {
+    return c.json({ error: "Name must be 100 characters or less" }, 400);
+  }
+  if (content.length > 10000) {
+    return c.json({ error: "Content must be 10000 characters or less" }, 400);
+  }
+  const now = Date.now();
+  const prompt: SystemPrompt = {
+    id: typeof body.id === "string" && body.id.trim() && body.id.length <= 36 ? body.id.trim() : crypto.randomUUID(),
+    user_id: "default",
+    name,
+    content,
+    created_at: typeof body.created_at === "number" ? body.created_at : now,
+    updated_at: typeof body.updated_at === "number" ? body.updated_at : now,
+  };
+  await c.env.DB.prepare(
+    "INSERT INTO system_prompts (id, user_id, name, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, content = excluded.content, updated_at = excluded.updated_at WHERE system_prompts.updated_at IS NULL OR excluded.updated_at >= system_prompts.updated_at",
+  )
+    .bind(prompt.id, prompt.user_id, prompt.name, prompt.content, prompt.created_at, prompt.updated_at)
+    .run();
+  return c.json(prompt, 201);
+});
+
+app.patch("/api/system-prompts/:id", async (c) => {
+  const id = c.req.param("id");
+  const body = (await c.req.json().catch(() => ({}))) || {};
+
+  const existing = await c.env.DB.prepare("SELECT id FROM system_prompts WHERE id = ?")
+    .bind(id)
+    .first<{ id: string }>();
+  if (!existing) return c.json({ error: "Not found" }, 404);
+
+  const updates: string[] = [];
+  const params: (string | number)[] = [];
+  if (body.name !== undefined) {
+    if (typeof body.name !== "string" || !body.name.trim()) {
+      return c.json({ error: "Name must be a non-empty string" }, 400);
+    }
+    if (body.name.trim().length > 100) {
+      return c.json({ error: "Name must be 100 characters or less" }, 400);
+    }
+    updates.push("name = ?");
+    params.push(body.name.trim());
+  }
+  if (body.content !== undefined) {
+    if (typeof body.content !== "string" || !body.content.trim()) {
+      return c.json({ error: "Content must be a non-empty string" }, 400);
+    }
+    if (body.content.trim().length > 10000) {
+      return c.json({ error: "Content must be 10000 characters or less" }, 400);
+    }
+    updates.push("content = ?");
+    params.push(body.content.trim());
+  }
+  if (updates.length === 0) return c.json({ error: "Nothing to update" }, 400);
+
+  const updatedAt = typeof body.updated_at === "number" ? body.updated_at : Date.now();
+  updates.push("updated_at = ?");
+  params.push(updatedAt);
+  params.push(id);
+  await c.env.DB.prepare(`UPDATE system_prompts SET ${updates.join(", ")} WHERE id = ?`)
+    .bind(...params)
+    .run();
+  return c.json({ success: true });
+});
+
+app.delete("/api/system-prompts/:id", async (c) => {
+  const id = c.req.param("id");
+  await c.env.DB.prepare("DELETE FROM system_prompts WHERE id = ?").bind(id).run();
+  return c.json({ success: true });
 });
 
 // Settings

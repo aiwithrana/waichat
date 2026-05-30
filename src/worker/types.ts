@@ -13,6 +13,8 @@ export interface Conversation {
   created_at: number;
   updated_at: number;
   import_complete?: number | null;
+  system_prompt_id?: string | null;
+  system_prompt?: string | null;
 }
 
 export interface Message {
@@ -30,6 +32,15 @@ export interface Model {
   id: string;
   name: string;
   notice?: string;
+}
+
+export interface SystemPrompt {
+  id: string;
+  user_id: string;
+  name: string;
+  content: string;
+  created_at: number;
+  updated_at?: number | null;
 }
 
 export interface ChatRequest {
