@@ -7,6 +7,7 @@ import type { Message } from "../storage";
 import ConfirmModal from "./ConfirmModal";
 import { useImageBytes } from "../hooks/useImageBytes";
 import { readImageMetadata } from "../utils/imageGeneration";
+import { getImageModel } from "../../shared/imageModels";
 
 interface MessageListProps {
   messages: Message[];
@@ -421,9 +422,20 @@ export default function MessageList({
 
     // Scroll down if we aren't locked
     if (!isUserScrolled.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+      const container = scrollRef.current;
+      if (container) container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (!pendingImage && !isStreaming) return;
+    isUserScrolled.current = false;
+    const frame = requestAnimationFrame(() => {
+      const container = scrollRef.current;
+      if (container) container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pendingImage, isStreaming]);
 
   const handleCopy = async (id: string, content: string) => {
     // Strip <think> tags (even unclosed ones) before copying to clipboard
@@ -460,7 +472,7 @@ export default function MessageList({
         </p>
         {pendingImage && <div className="w-full max-w-[720px] mx-auto mb-6"><div className="h-64 rounded-xl bg-black/5 dark:bg-white/5 animate-pulse" /><p className="text-xs text-gray-500 mt-2">Generating image…</p></div>}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 w-full max-w-4xl mb-10">
+        {!isStreaming && !pendingImage && <div className="grid grid-cols-1 md:grid-cols-3 gap-5 w-full max-w-4xl mb-10">
           <button
             type="button"
             onClick={() =>
@@ -546,7 +558,7 @@ export default function MessageList({
               Dive into science, physics, history, or anything else you're curious about.
             </div>
           </button>
-        </div>
+        </div>}
       </div>
     );
   }
@@ -555,7 +567,7 @@ export default function MessageList({
     <div
       ref={scrollRef}
       onScroll={handleScroll}
-      className="flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-black/10 dark:[&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full"
+      className="min-h-0 flex-1 overflow-y-auto [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-black/10 dark:[&::-webkit-scrollbar-thumb]:bg-white/10 [&::-webkit-scrollbar-thumb]:rounded-full"
     >
       <div className="max-w-4xl mx-auto px-4 md:px-8 py-10 space-y-12">
         {displayItems.map((item, idx) => {
@@ -937,6 +949,7 @@ export default function MessageList({
 
 function ImageMessage({ message, onRegenerate }: { message: Message; onRegenerate: () => void }) {
   const metadata = readImageMetadata(message.image_metadata);
+  const termsUrl = metadata?.model ? getImageModel(metadata.model)?.termsUrl : undefined;
   const imageUrl = useImageBytes(metadata?.image_id);
   const error = metadata && "error" in metadata ? String(metadata.error) : undefined;
   return <div className="max-w-full space-y-3">
@@ -949,5 +962,6 @@ function ImageMessage({ message, onRegenerate }: { message: Message; onRegenerat
       {imageUrl && <a href={imageUrl} download={`waichat-image-${metadata?.image_id || message.id}.${metadata?.mime_type?.split("/")[1] || "img"}`} className="text-xs rounded-full border px-3 py-1.5">Download</a>}
       <button onClick={onRegenerate} className="text-xs rounded-full border px-3 py-1.5">Regenerate</button>
     </div>
+    {metadata?.license_badge && <span className="text-[10px] text-gray-400">License: {termsUrl ? <a href={termsUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">{metadata.license_badge}</a> : metadata.license_badge}</span>}
   </div>;
 }
